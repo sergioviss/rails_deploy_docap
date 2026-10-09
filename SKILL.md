@@ -153,6 +153,7 @@ Qué hace el deploy:
 | `Your bundle only supports platforms ...` | `bundle lock --add-platform x86_64-linux` (o `aarch64-linux`), commit y push. |
 | `Permission denied (publickey)` al clonar | Falta la deploy key (Fase 4). |
 | "Key is already in use" al agregar la deploy key | La llave ya está en la cuenta personal o en otro repo (Fase 4). |
+| `LoadError: cannot load such file -- matrix` (o `net-smtp`, `csv`, `base64`, `bigdecimal`, `mutex_m`, `drb`, `observer`, `ostruct`...) en el servidor pero no en local | Ya no viene incluida en Ruby y en local solo llegaba por una gema de dev/test (ej. capybara → matrix). Agrégala al Gemfile, haz commit y push, y redespliega. Para detectarlo antes: `grep -B3 '^      <gema>$' Gemfile.lock` muestra quién la trae. |
 | `cap ...` falla en `rbenv:validate` | Las tareas de cap validan rbenv en el servidor, así que no corren antes del bootstrap. |
 | `linked file .../.env does not exist` | El bootstrap no corrió o `APP` no coincide con `:application`. |
 | `PG::ConnectionBad ... password authentication failed` | Las variables del `.env` no coinciden con las que lee `database.yml`. |
