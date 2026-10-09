@@ -77,7 +77,8 @@ Comprueba que el usuario deploy entra con llave: `ssh -o BatchMode=yes deploy@IP
    ```
    - Agrega también `APP_HOST=<dominio o IP>`.
    - Si hay solid_queue y no habrá un proceso aparte de jobs, agrega `SOLID_QUEUE_IN_PUMA=true`.
-   - Si `db/seeds.rb` necesita variables (ej. `SEED_ADMIN_PASSWORD`), deben estar **antes** del primer deploy. Si es una contraseña, genérala en el servidor de forma que cumpla las reglas de la app (ej. `"Gn$(openssl rand -hex 6)#7"`), no la muestres, y dile al usuario cómo leerla: `ssh deploy@IP grep SEED_ /var/www/APP/shared/.env`.
+   - Si `db/seeds.rb` necesita variables (ej. `SEED_ADMIN_PASSWORD`), deben estar **antes** del primer deploy. Si es una contraseña, genérala en el servidor de forma que cumpla las reglas de la app (ej. `"Gn$(openssl rand -hex 6)-7"`; **sin `#`**, porque dotenv corta el valor ahí si no va entre comillas), no la muestres, y dile al usuario cómo leerla: `ssh deploy@IP grep SEED_ /var/www/APP/shared/.env`.
+   - Valores con `#`, espacios o comillas van entre comillas dobles: `CLAVE="a#b c"`. Sin comillas, dotenv descarta todo desde el `#`.
    - Nunca imprimas el `.env`. Para revisarlo usa `cut -d= -f1`.
 3. **Archivos secretos (`SECRET_FILES`):** súbelos a `/var/www/APP/shared/<misma ruta>`, por ejemplo `scp config/master.key deploy@IP:/var/www/APP/shared/config/`, y agrégalos a `linked_files` en la Fase 5. Después: `ssh deploy@IP chmod 600 /var/www/APP/shared/config/*`.
 
@@ -128,7 +129,7 @@ Qué hace el deploy:
 
 1. Corre `ssh deploy@IP "APP=<APP_NAME> bash -s" < "$SKILL_DIR/scripts/verify.sh"`. Debe terminar en `TODO OK`.
 2. Desde local: `curl -sIL http://IP/` (o el dominio) debe dar 200, o 302 a una página que responde 200.
-3. Si tienes herramientas de navegador (Playwright, Chrome), abre la URL. Revisa que carguen estilos y JS sin errores en consola. Si el usuario da credenciales (ej. el usuario de los seeds), inicia sesión y navega una o dos páginas.
+3. Si tienes herramientas de navegador (Playwright, Chrome), abre la URL. Revisa que carguen estilos y JS sin errores en consola. Si hay usuario de seeds o el usuario te da credenciales, prueba un login real. Hazlo desde el servidor con `curl` y la contraseña leída del `.env`, para no exponerla: GET `/users/sign_in` → extrae `authenticity_token` → POST con cookie jar → GET `/` debe dar 200 sin redirigir al login.
 4. Si algo falla: lee los logs que imprime `verify.sh`, usa la tabla de abajo, corrige y vuelve a desplegar. Repite hasta que todo pase.
 
 **Reporte final para el usuario:**
@@ -154,6 +155,7 @@ Qué hace el deploy:
 | `Permission denied (publickey)` al clonar | Falta la deploy key (Fase 4). |
 | "Key is already in use" al agregar la deploy key | La llave ya está en la cuenta personal o en otro repo (Fase 4). |
 | `LoadError: cannot load such file -- matrix` (o `net-smtp`, `csv`, `base64`, `bigdecimal`, `mutex_m`, `drb`, `observer`, `ostruct`...) en el servidor pero no en local | Ya no viene incluida en Ruby y en local solo llegaba por una gema de dev/test (ej. capybara → matrix). Agrégala al Gemfile, haz commit y push, y redespliega. Para detectarlo antes: `grep -B3 '^      <gema>$' Gemfile.lock` muestra quién la trae. |
+| Seeds fallan por contraseña inválida aunque cumpla las reglas | El valor en `.env` tiene `#` sin comillas y dotenv lo cortó. Ponlo entre comillas o quita el `#`. Como `db:prepare` solo siembra al crear la BD, después corre `db:seed` a mano en la release. |
 | `cap ...` falla en `rbenv:validate` | Las tareas de cap validan rbenv en el servidor, así que no corren antes del bootstrap. |
 | `linked file .../.env does not exist` | El bootstrap no corrió o `APP` no coincide con `:application`. |
 | `PG::ConnectionBad ... password authentication failed` | Las variables del `.env` no coinciden con las que lee `database.yml`. |
