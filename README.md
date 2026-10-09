@@ -10,6 +10,7 @@ SKILL.md              instrucciones por fases (lo que lee el agente)
 scripts/detect.sh     local: versiones y necesidades del proyecto
 scripts/bootstrap.sh  servidor (root/sudo): usuario deploy, Ruby, PostgreSQL, Nginx, Puma, firewall
 scripts/verify.sh     servidor (deploy): Puma, Nginx, assets, BD, migraciones
+scripts/ssl.sh        servidor (root/sudo): HTTPS con Let's Encrypt para dominio o IP
 templates/            Capfile, config/deploy.rb, config/deploy/production.rb
 ```
 

@@ -26,7 +26,7 @@ Corre `bash "$SKILL_DIR/scripts/detect.sh"` y muéstrale al usuario un resumen. 
 | Usuario SSH inicial | `root` (DigitalOcean) o `ubuntu` (AWS). Necesita **sudo sin contraseña**. Es el único permiso que se requiere. |
 | Acceso | Contraseña **o** llave `.pem`. Ver Fase 1. |
 | Rama a desplegar | por defecto, `BRANCH` de detect |
-| Dominio (opcional) | para `server_name` y SSL. Sin dominio se usa la IP por HTTP. |
+| Dominio (opcional) | para `server_name` y HTTPS. Sin dominio, HTTPS se hace con un certificado para la IP (Fase 8). |
 | Valores del `.env` | Las variables salen de `ENV_VARS` de detect. Pide solo los valores. Lo más fácil es que el usuario tenga un archivo local (ej. `.env.production`, ignorado por git) y lo subas. |
 
 Revisa también lo siguiente:
@@ -106,7 +106,7 @@ Si `HAS_CAPFILE=1`, revisa la configuración existente y adáptala a lo que sigu
 3. Corre `bundle install`.
 4. **Plataformas:** si `LOCK_PLATFORMS` no incluye la del servidor (`x86_64-linux` o `aarch64-linux`, según `SERVER_ARCH`) ni `ruby`, corre `bundle lock --add-platform <plataforma>`.
 5. **Templates:** copia `$SKILL_DIR/templates/Capfile` a `Capfile`, `templates/deploy.rb` a `config/deploy.rb` y `templates/production.rb` a `config/deploy/production.rb`. Reemplaza `__APP__`, `__REPO_URL__`, `__BRANCH__` e `__IP__`, y agrega los `SECRET_FILES` a `linked_files`.
-6. **SSL:** si `FORCE_SSL=1` y no hay dominio con certificado, la app redirige a https y no carga. Pregunta al usuario. Lo usual es cambiarlo a `config.force_ssl = ENV["FORCE_SSL"] == "true"` y lo mismo con `assume_ssl`.
+6. **SSL:** si `FORCE_SSL=1` (detect), la app redirige a https y no carga hasta que haya certificado. En cualquier caso, deja `production.rb` así: `config.assume_ssl = ENV["FORCE_SSL"] == "true"` y `config.force_ssl = ENV["FORCE_SSL"] == "true"`. Se activa en la Fase 8 con `FORCE_SSL=true` en el `.env`; sin eso, la cookie de sesión no lleva `secure`.
 7. **Hosts:** si `config.hosts` está activo en `production.rb`, agrega el dominio o la IP.
 8. **Commit y push:** con confirmación del usuario, haz commit y push de Gemfile, Gemfile.lock, Capfile y config/deploy*. Capistrano clona desde el remoto, así que sin push el servidor no ve estos cambios.
 
@@ -136,11 +136,30 @@ Qué hace el deploy:
 - La URL.
 - Cómo redesplegar: `bundle exec cap production deploy`.
 - Dónde están los logs: `/var/www/APP/shared/log/`.
-- Qué quedó fuera: SSL si no hubo dominio, procesos de jobs aparte y respaldos de la BD.
+- Qué quedó fuera: procesos de jobs aparte y respaldos de la BD. Si no se hizo la Fase 8, también HTTPS.
 
 ## Fase 8 (opcional, con confirmación)
 
-- **SSL** (requiere un dominio que apunte a la IP): `ssh USER@IP "sudo apt-get install -yq certbot python3-certbot-nginx && sudo certbot --nginx -d DOMINIO --non-interactive --agree-tos -m EMAIL --redirect"`. Después activa `FORCE_SSL=true` en `.env` y reinicia Puma.
+- **HTTPS con Let's Encrypt:** sirve para un dominio (su registro A debe apuntar a la IP) o para la IP misma, mientras no haya dominio. Pregunta por un correo para avisos de vencimiento; si no lo dan, se registra sin correo.
+  ```bash
+  ssh USER@IP "sudo APP=<APP_NAME> HOST=<dominio o IP> EMAIL=<correo o vacío> bash -s" < "$SKILL_DIR/scripts/ssl.sh"
+  ```
+  El script hace lo siguiente:
+  - Instala certbot ≥ 5.4 con snap. El de apt es muy viejo para certificados de IP.
+  - Hace un dry-run contra staging y luego emite el certificado real con `--webroot`, en `/var/www/letsencrypt`, la misma ruta que deja el bootstrap.
+  - Reescribe el sitio de nginx: 443 con el certificado y 80 → 301 a https.
+  - Configura el hook `systemctl reload nginx` para cada renovación.
+  - Debe terminar en `SSL_OK`.
+
+  **Con IP**, Let's Encrypt solo emite certificados de **6 días** (perfil `shortlived`). El timer de snap los renueva solo, así que no requiere acción. El plugin `--nginx` de certbot no soporta IPs; por eso se usa webroot.
+
+  Después:
+  1. Agrega `FORCE_SSL=true` al `.env` (con `production.rb` como en la Fase 5, paso 6).
+  2. Corre `bundle exec cap production puma:restart`.
+  3. Vuelve a correr la Fase 7. `verify.sh` detecta HTTPS solo.
+  4. Con `curl -sI https://HOST/` revisa que la cookie de sesión lleve `secure` y que exista `strict-transport-security`.
+
+  **Al pasar de IP a dominio:** apunta el DNS, corre `ssl.sh` de nuevo con `HOST=<dominio>`, actualiza `APP_HOST` en el `.env` y reinicia Puma. El certificado de la IP se puede quitar con `sudo certbot delete --cert-name <IP>`.
 - **Cerrar el login SSH por contraseña:** solo después de comprobar que `ssh -o BatchMode=yes` funciona para USER y para deploy.
   ```bash
   ssh USER@IP "echo 'PasswordAuthentication no' | sudo tee /etc/ssh/sshd_config.d/00-no-password.conf && sudo systemctl reload ssh"
@@ -162,7 +181,8 @@ Qué hace el deploy:
 | `ArgumentError: Missing secret_key_base` / `InvalidMessage` | Falta `config/master.key` en shared + `linked_files`, o falta `SECRET_KEY_BASE`. |
 | Precompilado local falla por `ENV.fetch` | Un initializer exige variables. Pásalas con un valor dummy solo para el precompilado o haz que el initializer tolere su ausencia (pregunta). |
 | 502 Bad Gateway | Puma no corre. Revisa `tail shared/log/puma.log` y `systemctl --user status APP_puma`. |
-| Redirige a https / `ERR_SSL_PROTOCOL_ERROR` | `force_ssl` sin certificado (Fase 5, paso 6). |
+| Redirige a https / `ERR_SSL_PROTOCOL_ERROR` | `force_ssl` sin certificado (Fase 5, paso 6, y Fase 8). |
+| certbot: `--ip-address` no existe, o el challenge falla con IP | certbot < 5.4: usa el de snap, no el de apt. El challenge HTTP-01 necesita el puerto 80 abierto (ufw `Nginx Full`) y `location /.well-known/acme-challenge/` en nginx (lo pone el bootstrap). |
 | `Blocked hosts: ...` | Agrega el host a `config.hosts`. |
 | Página sin estilos / `/assets/...` 404 | Falta `public/assets` en `linked_dirs`, el rsync no corrió, o Nginx no tiene `root .../current/public`. |
 | `systemctl --user`: `Failed to connect to bus` | `sudo loginctl enable-linger deploy` y `export XDG_RUNTIME_DIR=/run/user/$(id -u)`. |

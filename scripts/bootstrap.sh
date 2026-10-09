@@ -123,34 +123,43 @@ $APP_DIR/shared/log/*.log {
 EOF
 
 step "Nginx como proxy inverso hacia Puma (127.0.0.1:$PORT)"
-cat > "/etc/nginx/sites-available/$APP" <<EOF
+# La app vive en un snippet que comparten el server de HTTP (aquí) y el de HTTPS (ssl.sh)
+install -d /var/www/letsencrypt
+cat > "/etc/nginx/snippets/$APP.conf" <<EOF
+root $APP_DIR/current/public;
+client_max_body_size 50m;
+
+location ^~ /assets/ {
+  expires max;
+  add_header Cache-Control public;
+  try_files \$uri =404;
+}
+
+location / {
+  try_files \$uri @puma;
+}
+
+location @puma {
+  proxy_pass http://127.0.0.1:$PORT;
+  proxy_set_header Host \$host;
+  proxy_set_header X-Real-IP \$remote_addr;
+  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto \$scheme;
+  proxy_redirect off;
+}
+EOF
+# Si ssl.sh ya configuró HTTPS, no se pisa el sitio
+if ! grep -q ssl_certificate "/etc/nginx/sites-available/$APP" 2>/dev/null; then
+  cat > "/etc/nginx/sites-available/$APP" <<EOF
 server {
   listen 80 default_server;
   listen [::]:80 default_server;
   server_name $SERVER_NAME;
-  root $APP_DIR/current/public;
-  client_max_body_size 50m;
-
-  location ^~ /assets/ {
-    expires max;
-    add_header Cache-Control public;
-    try_files \$uri =404;
-  }
-
-  location / {
-    try_files \$uri @puma;
-  }
-
-  location @puma {
-    proxy_pass http://127.0.0.1:$PORT;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-    proxy_redirect off;
-  }
+  location ^~ /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
+  include snippets/$APP.conf;
 }
 EOF
+fi
 ln -sf "../sites-available/$APP" "/etc/nginx/sites-enabled/$APP"
 rm -f /etc/nginx/sites-enabled/default
 nginx -t -q && systemctl reload nginx

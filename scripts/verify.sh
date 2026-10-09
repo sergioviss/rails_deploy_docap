@@ -14,18 +14,20 @@ check() {
   local name=$1; shift
   if "$@" >/dev/null 2>&1; then echo "OK   $name"; else echo "FAIL $name"; fails=$((fails + 1)); fi
 }
-http_ok() { [[ $(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$1") =~ ^[23] ]]; }
+http_ok() { [[ $(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 "$1") =~ ^[23] ]]; }
+# Con HTTPS configurado (ssl.sh), HTTP solo redirige: las revisiones de nginx van por HTTPS
+if curl -sk -o /dev/null --max-time 5 https://127.0.0.1/; then WEB=https://127.0.0.1; else WEB=http://127.0.0.1; fi
 asset=$(ls public/assets 2>/dev/null | grep -m1 -E '\.(css|js)$')
 
 check "puma activo (systemd)"            systemctl --user is-active "${APP}_puma"
 check "puma responde en :$PORT"          http_ok "http://127.0.0.1:$PORT/"
-check "nginx responde en :80"            http_ok "http://127.0.0.1/"
+check "nginx responde en $WEB"           http_ok "$WEB/"
 check "assets presentes en public/assets" test -n "$asset"
-check "nginx sirve /assets/$asset"       http_ok "http://127.0.0.1/assets/$asset"
+check "nginx sirve /assets/$asset"       http_ok "$WEB/assets/$asset"
 check "conexión a la BD"                 bundle exec rails runner 'ActiveRecord::Base.connection.select_value("SELECT 1")'
 check "sin migraciones pendientes"       bash -c '! bundle exec rails db:migrate:status | grep -qE "^\s+down"'
 
-echo "HTTP / vía nginx: $(curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}' --max-time 15 http://127.0.0.1/)"
+echo "GET / vía nginx: $(curl -sk -o /dev/null -w '%{http_code} -> %{redirect_url}' --max-time 15 "$WEB/")"
 if [ "$fails" -gt 0 ]; then
   echo "--- shared/log/puma.log ---";      tail -n 60 "/var/www/$APP/shared/log/puma.log" 2>/dev/null
   echo "--- log/production.log ---";       tail -n 60 log/production.log 2>/dev/null
