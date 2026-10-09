@@ -107,7 +107,7 @@ bundle exec cap production deploy
 Qué hace el deploy:
 - Antes de empezar, verifica que el código local sea igual a `origin/<rama>` y precompila los assets en local.
 - `deploy:migrate` corre `db:prepare`. En el primer deploy crea todas las BDs, carga el schema y corre los seeds. Después solo migra.
-- Antes de publicar, sube `public/assets/` con rsync a `shared/public/assets/` (es el `scp -r public/assets/. deploy@IP:/var/www/APP/shared/public/assets/`, pero incremental) y limpia la copia local.
+- Antes de publicar, sube `public/assets/` con rsync a `shared/public/assets/` (es el `scp -r public/assets/. deploy@IP:/var/www/APP/shared/public/assets/`, pero incremental). Esto incluye los archivos que la app tenga versionados en `public/assets`, que el symlink de `shared` taparía. Al terminar borra en local solo lo que generó el precompilado. **Nunca uses `assets:clobber`**: borra también los archivos versionados.
 - Al final reinicia `APP_puma`.
 
 ## Fase 7. Verificar (no termines sin esto)

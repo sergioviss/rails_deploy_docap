@@ -24,18 +24,25 @@ namespace :deploy do
     unless `git rev-parse HEAD` == `git rev-parse origin/#{branch}` && `git status --porcelain --untracked-files=no`.empty?
       abort "El código local no coincide con origin/#{branch} (o hay cambios sin commit): los assets no corresponderían al deploy."
     end
+    # Sin assets:clobber: algunas apps versionan archivos en public/assets y clobber los borraría.
+    # Al terminar (con éxito o error) se borra solo lo que generó el precompilado, para que development no sirva assets viejos.
+    existed = Dir.exist?("public/assets")
+    before = Dir.glob("public/assets/**/*", File::FNM_DOTMATCH)
+    at_exit do
+      next FileUtils.rm_rf("public/assets") unless existed
+      (Dir.glob("public/assets/**/*", File::FNM_DOTMATCH) - before).reject { |p| p.end_with?("/.") }
+        .sort.reverse.each { |p| File.directory?(p) ? Dir.rmdir(p) : File.delete(p) }
+    end
     system({ "RAILS_ENV" => "production", "SECRET_KEY_BASE_DUMMY" => "1" },
-           "bin/rails assets:clobber assets:precompile", exception: true)
+           "bin/rails assets:precompile", exception: true)
   end
 
-  desc "Sube public/assets a shared/public/assets y limpia la copia local"
+  desc "Sube public/assets (precompilados + archivos versionados ahí) a shared/public/assets"
   task :upload_assets do
     on roles(:web) do |host|
       system("rsync", "-az", "--chmod=D755,F644", "public/assets/",
              "#{host.user}@#{host.hostname}:#{shared_path}/public/assets/", exception: true)
     end
-    # Si se queda public/assets en local, development sirve esos assets viejos
-    system("bin/rails assets:clobber", exception: true)
   end
 
   before "deploy:starting", "deploy:precompile_assets_locally"
