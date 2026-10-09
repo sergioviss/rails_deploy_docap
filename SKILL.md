@@ -41,12 +41,16 @@ El objetivo es que `ssh -o BatchMode=yes USER@IP true` funcione sin contraseña.
 - **Con contraseña:** si el usuario no tiene llave local (`ls ~/.ssh/id_ed25519.pub`), ofrece crearla con `ssh-keygen -t ed25519`. Lo preferible es que el usuario mismo corra `ssh-copy-id USER@IP` **en una terminal aparte** y escriba ahí la contraseña. Así tú nunca la ves. No sirve el `!` de Claude Code ni otro shell sin TTY: ssh no puede pedir la contraseña y falla con `ssh_askpass: No such file`. Si te la dio en el chat, usa `SSHPASS='...' sshpass -e ssh-copy-id -o StrictHostKeyChecking=accept-new USER@IP`, sin escribirla en ningún archivo.
 - **Con `.pem` (AWS):** primero `chmod 400 llave.pem`. Para no tener que pasar `-i` en cada comando (ssh, rsync y Capistrano), instala también la llave normal del usuario: `ssh-copy-id -f -i ~/.ssh/id_ed25519.pub -o IdentityFile=llave.pem ubuntu@IP`.
 
+Con el acceso listo, revisa el servidor: `ssh USER@IP 'lsb_release -ds; uname -m; free -h | sed -n 2p; nproc'`. Necesitas Ubuntu 22.04 o 24.04. La arquitectura (`x86_64` / `aarch64`) se usa en la Fase 5. Con 1 CPU, cuenta con unos 15 min para el bootstrap y unos 10 min para el primer `bundle install`.
+
 ## Fase 2. Preparar el servidor
 
 ```bash
 ssh USER@IP "sudo APP=<APP_NAME> RUBY_VERSION=<RUBY_VERSION> BUNDLER_VERSION=<BUNDLER_VERSION> \
-  SERVER_NAME=<dominio o _> EXTRA_PACKAGES='<extras>' UPGRADE=0 bash -s" < "$SKILL_DIR/scripts/bootstrap.sh"
+  SERVER_NAME=<dominio o _> EXTRA_PACKAGES='<extras>' UPGRADE=0 bash -s" < "$SKILL_DIR/scripts/bootstrap.sh" > bootstrap.log 2>&1
 ```
+
+Córrelo en segundo plano con la salida a un log, fuera del repo. Para ver el avance: `grep '^==>' bootstrap.log`. Mientras corre, puedes avanzar con las Fases 4 y 5, que son locales.
 
 En `EXTRA_PACKAGES` agrega `libvips-tools` si `USES_IMAGE_PROCESSING=1` y `redis-server` si `USES_REDIS=1` o `USES_SIDEKIQ=1`.
 
@@ -64,10 +68,16 @@ Comprueba que el usuario deploy entra con llave: `ssh -o BatchMode=yes deploy@IP
    - Si database.yml lee otras variables, renómbralas en el `.env` del servidor.
    - Si usa `DATABASE_URL` con **una sola** BD, arma `postgres://deploy:<pass>@localhost/<bd>`.
    - Con varias BDs (`PROD_DATABASES`, ej. solid_cache/queue/cable) **no** uses `DATABASE_URL`, porque solo aplica a la primaria.
-2. **Variables de la app:** agrega las de `ENV_VARS` con sus valores. Si el usuario tiene un archivo local, súbelo con `scp archivo deploy@IP:/tmp/env.add`. Luego, en el servidor, agrega al `.env` solo las claves que no existan y borra `/tmp/env.add`.
+2. **Variables de la app:** agrega las de `ENV_VARS` con sus valores. Si el usuario tiene un archivo local, súbelo y fusiónalo. Solo se agregan las claves que no existan, así que las `DATABASE_*` del bootstrap ganan sobre las de desarrollo:
+   ```bash
+   scp ARCHIVO deploy@IP:/tmp/env.add
+   ssh deploy@IP 'E=/var/www/APP/shared/.env
+     grep -E "^[A-Z0-9_]+=" /tmp/env.add | while IFS= read -r l; do grep -q "^${l%%=*}=" $E || echo "$l" >> $E; done
+     rm -f /tmp/env.add; cut -d= -f1 $E | xargs'
+   ```
    - Agrega también `APP_HOST=<dominio o IP>`.
    - Si hay solid_queue y no habrá un proceso aparte de jobs, agrega `SOLID_QUEUE_IN_PUMA=true`.
-   - Si `db/seeds.rb` necesita variables (ej. `SEED_ADMIN_PASSWORD`), deben estar **antes** del primer deploy.
+   - Si `db/seeds.rb` necesita variables (ej. `SEED_ADMIN_PASSWORD`), deben estar **antes** del primer deploy. Si es una contraseña, genérala en el servidor de forma que cumpla las reglas de la app (ej. `"Gn$(openssl rand -hex 6)#7"`), no la muestres, y dile al usuario cómo leerla: `ssh deploy@IP grep SEED_ /var/www/APP/shared/.env`.
    - Nunca imprimas el `.env`. Para revisarlo usa `cut -d= -f1`.
 3. **Archivos secretos (`SECRET_FILES`):** súbelos a `/var/www/APP/shared/<misma ruta>`, por ejemplo `scp config/master.key deploy@IP:/var/www/APP/shared/config/`, y agrégalos a `linked_files` en la Fase 5. Después: `ssh deploy@IP chmod 600 /var/www/APP/shared/config/*`.
 
@@ -82,7 +92,9 @@ gh repo deploy-key add /tmp/deploy_key.pub --repo OWNER/REPO --title "deploy@IP"
 
 Si `gh` no está, no tiene sesión o no tiene permisos de admin en el repo, dale al usuario la llave y la ruta: GitHub → Settings → Deploy keys → Add.
 
-Para probar: `ssh deploy@IP 'ssh -T git@github.com'`. Debe decir "successfully authenticated" (el código de salida 1 es normal).
+Para probar: `ssh deploy@IP 'ssh -T git@github.com'`. Debe decir **`Hi OWNER/REPO!`** (el código de salida 1 es normal).
+
+Si dice `Hi <usuario>!`, la llave quedó en la **cuenta personal** del usuario (github.com/settings/keys) y no como deploy key. Funciona, pero da al servidor acceso de escritura a todos sus repos. Pídele que la borre de su cuenta y la agregue en el repo. GitHub responde "Key is already in use" mientras siga en la cuenta.
 
 ## Fase 5. Capistrano en el proyecto
 
@@ -101,8 +113,10 @@ Si `HAS_CAPFILE=1`, revisa la configuración existente y adáptala a lo que sigu
 
 ```bash
 bundle exec cap production deploy:check   # valida SSH, git y que existan los linked_files
-bundle exec cap production deploy
+bundle exec cap production deploy > deploy.log 2>&1   # primer deploy en segundo plano: bundle install tarda
 ```
+
+Para ver el avance: `grep -E '^[0-9]{2}:[0-9]{2} ' deploy.log | tail`.
 
 Qué hace el deploy:
 - Antes de empezar, verifica que el código local sea igual a `origin/<rama>` y precompila los assets en local.
@@ -138,6 +152,8 @@ Qué hace el deploy:
 | `rbenv install` muere con `Killed` | Falta de RAM. El bootstrap agrega swap si no hay; revisa `free -h` y vuelve a correrlo. |
 | `Your bundle only supports platforms ...` | `bundle lock --add-platform x86_64-linux` (o `aarch64-linux`), commit y push. |
 | `Permission denied (publickey)` al clonar | Falta la deploy key (Fase 4). |
+| "Key is already in use" al agregar la deploy key | La llave ya está en la cuenta personal o en otro repo (Fase 4). |
+| `cap ...` falla en `rbenv:validate` | Las tareas de cap validan rbenv en el servidor, así que no corren antes del bootstrap. |
 | `linked file .../.env does not exist` | El bootstrap no corrió o `APP` no coincide con `:application`. |
 | `PG::ConnectionBad ... password authentication failed` | Las variables del `.env` no coinciden con las que lee `database.yml`. |
 | `ArgumentError: Missing secret_key_base` / `InvalidMessage` | Falta `config/master.key` en shared + `linked_files`, o falta `SECRET_KEY_BASE`. |
