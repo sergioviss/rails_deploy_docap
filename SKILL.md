@@ -38,7 +38,7 @@ Revisa también lo siguiente:
 
 El objetivo es que `ssh -o BatchMode=yes USER@IP true` funcione sin contraseña. Todo lo demás depende de esto.
 
-- **Con contraseña:** si el usuario no tiene llave local (`ls ~/.ssh/id_ed25519.pub`), ofrece crearla con `ssh-keygen -t ed25519`. Lo preferible es que el usuario mismo corra `ssh-copy-id USER@IP` y escriba la contraseña en su terminal (en Claude Code: `! ssh-copy-id USER@IP`). Así tú nunca la ves. Si te la dio en el chat, usa `SSHPASS='...' sshpass -e ssh-copy-id -o StrictHostKeyChecking=accept-new USER@IP`, sin escribirla en ningún archivo.
+- **Con contraseña:** si el usuario no tiene llave local (`ls ~/.ssh/id_ed25519.pub`), ofrece crearla con `ssh-keygen -t ed25519`. Lo preferible es que el usuario mismo corra `ssh-copy-id USER@IP` **en una terminal aparte** y escriba ahí la contraseña. Así tú nunca la ves. No sirve el `!` de Claude Code ni otro shell sin TTY: ssh no puede pedir la contraseña y falla con `ssh_askpass: No such file`. Si te la dio en el chat, usa `SSHPASS='...' sshpass -e ssh-copy-id -o StrictHostKeyChecking=accept-new USER@IP`, sin escribirla en ningún archivo.
 - **Con `.pem` (AWS):** primero `chmod 400 llave.pem`. Para no tener que pasar `-i` en cada comando (ssh, rsync y Capistrano), instala también la llave normal del usuario: `ssh-copy-id -f -i ~/.ssh/id_ed25519.pub -o IdentityFile=llave.pem ubuntu@IP`.
 
 ## Fase 2. Preparar el servidor
