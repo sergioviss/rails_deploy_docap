@@ -52,7 +52,9 @@ end
 namespace :puma do
   desc "Reinicia Puma (servicio systemd de usuario creado por bootstrap.sh)"
   task :restart do
-    on roles(:app) { execute :systemctl, "--user", "restart", "#{fetch(:application)}_puma" }
+    on roles(:app) do
+      execute :systemctl, "--user", "restart", "#{fetch(:application)}_puma"
+    end
   end
 end
 after "deploy:publishing", "puma:restart"
