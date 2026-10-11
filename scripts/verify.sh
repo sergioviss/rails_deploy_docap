@@ -26,6 +26,9 @@ check "assets presentes en public/assets" test -n "$asset"
 check "nginx sirve /assets/$asset"       http_ok "$WEB/assets/$asset"
 check "conexión a la BD"                 bundle exec rails runner 'ActiveRecord::Base.connection.select_value("SELECT 1")'
 check "sin migraciones pendientes"       bash -c '! bundle exec rails db:migrate:status | grep -qE "^\s+down"'
+if grep -q '^SOLID_QUEUE_IN_PUMA=true' "/var/www/$APP/shared/.env" 2>/dev/null; then
+  check "Solid Queue corriendo en Puma"  bundle exec rails runner 'exit SolidQueue::Process.where(last_heartbeat_at: 5.minutes.ago..).exists?'
+fi
 
 echo "GET / vía nginx: $(curl -sk -o /dev/null -w '%{http_code} -> %{redirect_url}' --max-time 15 "$WEB/")"
 if [ "$fails" -gt 0 ]; then

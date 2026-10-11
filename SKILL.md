@@ -175,6 +175,7 @@ Qué hace el deploy:
 | "Key is already in use" al agregar la deploy key | La llave ya está en la cuenta personal o en otro repo (Fase 4). |
 | `LoadError: cannot load such file -- matrix` (o `net-smtp`, `csv`, `base64`, `bigdecimal`, `mutex_m`, `drb`, `observer`, `ostruct`...) en el servidor pero no en local | Ya no viene incluida en Ruby y en local solo llegaba por una gema de dev/test (ej. capybara → matrix). Agrégala al Gemfile, haz commit y push, y redespliega. Para detectarlo antes: `grep -B3 '^      <gema>$' Gemfile.lock` muestra quién la trae. |
 | Seeds fallan por contraseña inválida aunque cumpla las reglas | El valor en `.env` tiene `#` sin comillas y dotenv lo cortó. Ponlo entre comillas o quita el `#`. Como `db:prepare` solo siembra al crear la BD, después corre `db:seed` a mano en la release. |
+| Los jobs recurrentes no corren aunque `SOLID_QUEUE_IN_PUMA=true` | `config/puma.rb` se evalúa antes de que Rails cargue dotenv. El unit de Puma carga `shared/.env` con `EnvironmentFile` (bootstrap actual). En servidores viejos, vuelve a correr el bootstrap y `cap production puma:restart`. `verify.sh` lo revisa. |
 | `cap ...` falla en `rbenv:validate` | Las tareas de cap validan rbenv en el servidor, así que no corren antes del bootstrap. |
 | `linked file .../.env does not exist` | El bootstrap no corrió o `APP` no coincide con `:application`. |
 | `PG::ConnectionBad ... password authentication failed` | Las variables del `.env` no coinciden con las que lee `database.yml`. |

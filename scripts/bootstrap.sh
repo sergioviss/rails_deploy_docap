@@ -92,6 +92,8 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$APP_DIR/current
+# El .env también va al proceso: config/puma.rb se evalúa antes de que Rails cargue dotenv (ej. SOLID_QUEUE_IN_PUMA)
+EnvironmentFile=-$APP_DIR/shared/.env
 Environment=RAILS_ENV=production
 Environment=PORT=$PORT
 Environment=PATH=$home/.rbenv/shims:$home/.rbenv/bin:/usr/local/bin:/usr/bin:/bin
